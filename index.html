@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orbit Bouquet — Kepler + GR Precession</title>
+  <style>
+    :root{
+      --bg:#050611;
+      --panel:#0b0e1f;
+      --text:#d9e6ff;
+      --accent:#00f0ff;
+      --accent2:#ff4dd2;
+    }
+    html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 70% 30%, #0a0b1b 0%, #07081a 40%, var(--bg) 100%);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,"Inter","Helvetica Neue",Arial,Noto Sans;}
+    #wrap{position:fixed;inset:0;display:grid;grid-template-columns:1fr;}
+    canvas{width:100%;height:100%;display:block;}
+    /* Slide panel */
+    .ui{
+      position:fixed;inset:auto 0 36px auto;
+      max-width:min(92vw,380px);
+      background:linear-gradient(180deg,rgba(18,22,54,.7),rgba(9,11,28,.7));
+      backdrop-filter:blur(10px);
+      border:1px solid rgba(255,255,255,.08);
+      box-shadow:0 10px 30px rgba(0,0,0,.35);
+      border-radius:16px 0 0 16px;
+      padding:14px 14px 10px;
+      transform:translateX(0);
+      transition:transform .28s ease;
+      right:0;
+    }
+    .ui.collapsed{
+      transform:translateX(calc(100% - 32px)); /* keep tab visible */
+    }
+    .tab{
+      position:absolute;top:50%;left:-32px;transform:translateY(-50%);
+      width:32px;height:72px;border-radius:12px 0 0 12px;
+      background:linear-gradient(180deg,var(--accent),var(--accent2));
+      color:#021;display:flex;align-items:center;justify-content:center;
+      cursor:pointer;font-weight:800;user-select:none;box-shadow:0 6px 18px rgba(0,0,0,.35)
+    }
+    .row{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin:8px 0}
+    .row label{font-size:12px;opacity:.85}
+    input[type="range"]{width:100%}
+    .title{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+    .title h1{font-size:14px;margin:0}
+    .pill{padding:2px 8px;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));color:#021;font-weight:600;}
+    .btns{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+    button{appearance:none;border:1px solid rgba(255,255,255,.1);background:#0e1030;color:var(--text);padding:8px 10px;border-radius:10px;cursor:pointer}
+    button:hover{border-color:rgba(255,255,255,.2)}
+    .small{font-size:11px;opacity:.8;margin:6px 2px 0}
+    a{color:var(--accent)}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;background:#0d1223;border:1px solid rgba(255,255,255,.08);padding:1px 6px;border-radius:6px}
+    .footer{position:fixed;bottom:6px;right:12px;font-size:11px;opacity:.7;color:#ccc}
+    .eq{font-size:12px;opacity:.95;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);padding:8px;border-radius:10px;margin-top:8px}
+    .perf{font-size:11px;opacity:.8;margin-top:4px}
+  </style>
+  <!-- MathJax -->
+  <script id="MathJax-script" async
+          src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+  </script>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+  </div>
+
+  <div class="ui" role="region" aria-label="Orbit controls" id="panel">
+    <div class="tab" id="tab" title="Click or drag">≡</div>
+    <div class="title">
+      <h1>Orbit Bouquet</h1><span class="pill">Kepler + GR precession</span>
+    </div>
+    <div class="row"><label for="count">Orbits</label><input id="count" type="range" min="6" max="120" value="48" step="2" /></div>
+    <div class="row"><label for="ecc">Eccentricity e</label><input id="ecc" type="range" min="0.00" max="0.95" value="0.65" step="0.01" /></div>
+    <div class="row"><label for="prec">Precession</label><input id="prec" type="range" min="0" max="0.03" value="0.008" step="0.001" /></div>
+    <div class="row"><label for="trail">Trail fade</label><input id="trail" type="range" min="0.02" max="0.25" value="0.08" step="0.005" /></div>
+    <div class="row"><label for="speed">Orbital speed</label><input id="speed" type="range" min="0.2" max="4" value="1.3" step="0.1" /></div>
+    <div class="row"><label for="scale">Scale</label><input id="scale" type="range" min="0.4" max="1.4" value="0.95" step="0.01" /></div>
+    <div class="btns">
+      <button id="toggle">Pause</button>
+      <button id="randomize">Randomize</button>
+      <button id="reset">Reset</button>
+      <button id="perf">Perf: Auto</button>
+    </div>
+
+    <div class="eq" id="eqbox">
+      <div>Kepler: \( r(\theta,t)=\dfrac{a\,(1-e^2)}{1+e\cos(\theta-\varpi(t))} \)</div>
+      <div style="margin-top:4px">Precession: \( \dot{\varpi}\;=\;\Omega_{\rm GR}\;\approx\;\dfrac{6\pi\,GM}{a\,(1-e^2)\,c^2}\,\dfrac{1}{T} \)</div>
+    </div>
+
+    <div class="small">
+      Drag on canvas to rotate. Double-click canvas to center. Keyboard: <span class="kbd">Space</span> play/pause, <span class="kbd">r</span> reset, arrows tweak e &amp; precession.
+      <div class="perf" id="stats">FPS: — · resScale: 1.00 · quality: 1.00</div>
+    </div>
+  </div>
+
+  <div class="footer">Made with <span style="color:#ff4dd2">❤</span> by Huzaifa</div>
+
+  <script>
+    // ---------- State & UI ----------
+    const canvas=document.getElementById('c');
+    const ctx=canvas.getContext('2d',{alpha:false});
+    const DPR=Math.max(1,Math.min(1.5,window.devicePixelRatio||1)); // cap for perf
+    const state={
+      N:48,e:0.65,precession:0.008,fade:0.08,speed:1.3,scale:0.95,
+      running:true,center:{x:0,y:0},globalRotation:0,
+      renderScale:1.0, quality:1.0, autoPerf:true
+    };
+    const $=id=>document.getElementById(id);
+    const sliders=['count','ecc','prec','trail','speed','scale'];
+    const applyUI=()=>{
+      state.N=+$('count').value;
+      state.e=+$('ecc').value;
+      state.precession=+$('prec').value;
+      state.fade=+$('trail').value;
+      state.speed=+$('speed').value;
+      state.scale=+$('scale').value;
+      if (window.MathJax) MathJax.typesetPromise?.(); // refresh MathJax after changes
+    };
+    sliders.forEach(id=>$(id).addEventListener('input',applyUI));
+    $('toggle').onclick=()=>{state.running=!state.running;$('toggle').textContent=state.running?'Pause':'Play';};
+    $('reset').onclick=()=>{
+      $('count').value=48;$('ecc').value=0.65;$('prec').value=0.008;$('trail').value=0.08;$('speed').value=1.3;$('scale').value=0.95;
+      state.renderScale=1; state.quality=1; applyUI();
+    };
+    $('randomize').onclick=()=>{
+      $('count').value=Math.round(6+Math.random()*114);
+      $('ecc').value=(0.2+Math.random()*0.7).toFixed(2);
+      $('prec').value=(Math.random()*0.02).toFixed(3);
+      $('trail').value=(0.04+Math.random()*0.18).toFixed(3);
+      $('speed').value=(0.6+Math.random()*2.4).toFixed(1);
+      $('scale').value=(0.6+Math.random()*0.7).toFixed(2);
+      applyUI();
+    };
+    $('perf').onclick=()=>{
+      state.autoPerf=!state.autoPerf;
+      $('perf').textContent = 'Perf: ' + (state.autoPerf?'Auto':'Manual');
+    };
+
+    // Slide panel toggle + drag
+    const panel=$('panel'), tab=$('tab');
+    let draggingPanel=false, startX=0, startTx=0;
+    const setCollapsed=(v)=>panel.classList.toggle('collapsed',v);
+    tab.addEventListener('click',()=>setCollapsed(!panel.classList.contains('collapsed')));
+    tab.addEventListener('pointerdown',(e)=>{
+      draggingPanel=true; startX=e.clientX; startTx=panel.classList.contains('collapsed')?1:0;
+      tab.setPointerCapture(e.pointerId);
+    });
+    tab.addEventListener('pointermove',(e)=>{
+      if(!draggingPanel) return;
+      const dx=e.clientX-startX;
+      const w = Math.min(380, panel.getBoundingClientRect().width);
+      const prog = Math.min(1, Math.max(0, startTx + (-dx)/w));
+      panel.style.transition='none';
+      panel.style.transform=`translateX(${prog*(100- (32*100/w))}%)`;
+    });
+    const endDrag=(e)=>{
+      if(!draggingPanel) return;
+      draggingPanel=false; tab.releasePointerCapture(e.pointerId);
+      panel.style.transition='';
+      // decide based on final position
+      const r = panel.getBoundingClientRect();
+      const atEdge = (window.innerWidth - r.right) / r.width; // 0 to ~1
+      const collapsed = atEdge > 0.45; // threshold
+      setCollapsed(collapsed);
+      panel.style.transform='';
+    };
+    tab.addEventListener('pointerup',endDrag); tab.addEventListener('pointercancel',endDrag);
+
+    // ---------- Canvas sizing ----------
+    function resize(){
+      const rs = state.renderScale;
+      const w = Math.floor(window.innerWidth * DPR * rs);
+      const h = Math.floor(window.innerHeight * DPR * rs);
+      if(canvas.width!==w||canvas.height!==h){
+        canvas.width=w; canvas.height=h;
+        canvas.style.width=window.innerWidth+'px';
+        canvas.style.height=window.innerHeight+'px';
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.scale(1/(rs),1/(rs)); // draw at logical pixels while backing store is scaled
+        ctx.fillStyle='#050611';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        gradCache=null;
+      }
+    }
+    window.addEventListener('resize',resize);
+
+    // ---------- Rendering ----------
+    let t=0, periapsis=0, gradCache=null;
+    function getGradient(W,H,cx,cy){
+      if(gradCache) return gradCache;
+      const g=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.min(W,H)*0.6);
+      g.addColorStop(0,'rgba(0,255,255,0.06)');
+      g.addColorStop(1,'rgba(255,0,170,0)');
+      gradCache=g; return g;
+    }
+    function fadeFrame(){
+      ctx.save();
+      ctx.globalCompositeOperation='source-over';
+      ctx.fillStyle=`rgba(5,6,17,${state.fade})`;
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.restore();
+    }
+    function drawOrbits(){
+      const rs = state.renderScale;
+      const W=canvas.width*rs/DPR, H=canvas.height*rs/DPR;
+      const cx=W*0.5+state.center.x, cy=H*0.5+state.center.y;
+      const a=Math.min(W,H)*0.33*state.scale;
+      const e=state.e;
+      const b=a*Math.sqrt(1-e*e);
+
+      // soft halo once
+      ctx.save();
+      ctx.globalCompositeOperation='lighter';
+      ctx.fillStyle=getGradient(W,H,cx,cy);
+      ctx.beginPath(); ctx.arc(cx,cy,Math.min(W,H)*0.6,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(cx,cy);
+      ctx.rotate(state.globalRotation);
+      periapsis+=state.precession;
+
+      // quality controls
+      const baseSteps = 200;
+      const q = Math.max(0.6, state.quality);
+      const steps = Math.max(120, Math.round(baseSteps*q*state.scale));
+      const rings = state.N;
+
+      // cheaper glow
+      const blur = 8 * q * (DPR<=1?0.8:0.6);
+      ctx.lineWidth = Math.max(1, 1.2*q);
+      ctx.shadowBlur = blur;
+
+      for(let i=0;i<rings;i++){
+        const phi=(i/rings)*Math.PI*2;
+        const mix=i/rings;
+        const rCol = Math.round(0*(1-mix) + 255*mix);
+        const gCol = Math.round(240*(1-mix) + 77*mix);
+        const bCol = Math.round(255*(1-mix) + 210*mix);
+        const col = `rgba(${rCol},${gCol},${bCol},0.9)`;
+        ctx.strokeStyle=col;
+        ctx.shadowColor=col;
+
+        ctx.beginPath();
+        // manual loop (avoid Path2D allocations)
+        for(let s=0;s<=steps;s++){
+          const th=(s/steps)*Math.PI*2;
+          const R=a*(1-e*e)/(1+e*Math.cos(th));
+          const ang=th+periapsis+phi;
+          const x=R*Math.cos(ang);
+          const y=(R*Math.sin(ang))*(b/a);
+          if(s===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        }
+        ctx.closePath();
+        ctx.globalCompositeOperation='lighter';
+        ctx.stroke();
+      }
+
+      // particle
+      const thParticle=t*0.02*state.speed;
+      const R=a*(1-e*e)/(1+e*Math.cos(thParticle));
+      const ang=thParticle+periapsis;
+      const px=R*Math.cos(ang);
+      const py=(R*Math.sin(ang))*(b/a);
+      ctx.fillStyle='white';
+      ctx.shadowColor='rgba(255,255,255,0.8)';
+      ctx.shadowBlur=12*q;
+      ctx.beginPath(); ctx.arc(px,py,2,0,Math.PI*2); ctx.fill();
+
+      ctx.restore();
+    }
+
+    // ---------- Input on canvas ----------
+    let dragging=false,lastX=0,lastY=0;
+    canvas.addEventListener('pointerdown',e=>{
+      dragging=true;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId)
+    });
+    canvas.addEventListener('pointermove',e=>{
+      if(!dragging) return;
+      const dx=e.clientX-lastX, dy=e.clientY-lastY;
+      lastX=e.clientX; lastY=e.clientY;
+      state.globalRotation+=(dx-dy)*0.002;
+    });
+    canvas.addEventListener('pointerup',e=>{dragging=false;canvas.releasePointerCapture(e.pointerId)});
+    canvas.addEventListener('dblclick',()=>{state.center.x=0;state.center.y=0;});
+
+    // ---------- Perf monitor & autotune ----------
+    let frameCount=0, lastSec=performance.now(), fps=60;
+    function tune(){
+      const now=performance.now();
+      frameCount++;
+      if(now-lastSec>1000){
+        fps = frameCount*1000/(now-lastSec);
+        frameCount=0; lastSec=now;
+
+        if(state.autoPerf){
+          // step 1: reduce quality
+          if(fps<50 && state.quality>0.8) state.quality=Math.max(0.8,state.quality-0.05);
+          // step 2: clamp orbits
+          if(fps<45 && state.N>60){ state.N=Math.max(40, Math.min(state.N,60)); $('count').value=state.N; }
+          // step 3: reduce render scale
+          if(fps<38 && state.renderScale>0.8){ state.renderScale=Math.max(0.7, state.renderScale-0.05); resize(); }
+          // step 4: lighten trails to hide dropped frames
+          if(fps<32 && state.fade<0.14){ state.fade=Math.min(0.14, state.fade+0.01); $('trail').value=state.fade.toFixed(3); }
+          // try restore if strong FPS
+          if(fps>62){
+            state.quality=Math.min(1.0, state.quality+0.02);
+            if(state.renderScale<1.0){ state.renderScale=Math.min(1.0, state.renderScale+0.02); resize(); }
+          }
+        }
+        $('stats').textContent=`FPS: ${Math.round(fps)} · resScale: ${state.renderScale.toFixed(2)} · quality: ${state.quality.toFixed(2)}`;
+      }
+    }
+
+    // ---------- Frame loop ----------
+    function frame(){
+      if(state.running){
+        fadeFrame();
+        drawOrbits();
+        t++;
+      }
+      tune();
+      requestAnimationFrame(frame);
+    }
+
+    // ---------- Init ----------
+    applyUI(); resize(); frame();
+
+    // keyboard
+    window.addEventListener('keydown',e=>{
+      if(e.key===' '){$('toggle').click();e.preventDefault();}
+      if(e.key==='r'){$('reset').click();}
+      if(e.key==='ArrowUp'){$('prec').value=(+$('prec').value+0.001).toFixed(3);applyUI();}
+      if(e.key==='ArrowDown'){$('prec').value=Math.max(0,(+$('prec').value-0.001)).toFixed(3);applyUI();}
+      if(e.key==='ArrowLeft'){$('ecc').value=Math.max(0,(+$('ecc').value-0.01)).toFixed(2);applyUI();}
+      if(e.key==='ArrowRight'){$('ecc').value=Math.min(0.95,(+$('ecc').value+0.01)).toFixed(2);applyUI();}
+    });
+
+    // quick perf probe
+    (function perfTuner(){
+      let frames=0; const start=performance.now();
+      function tick(){
+        frames++;
+        if(frames<30) requestAnimationFrame(tick); else{
+          const probe=frames*1000/(performance.now()-start);
+          if(probe<45){
+            // cheaper defaults on weak devices
+            ctx.shadowBlur=6;
+            $('count').value=Math.min(60,+$('count').value);
+            state.renderScale=0.9; resize();
+            applyUI();
+          }
+        }
+      }
+      tick();
+    })();
+  </script>
+</body>
+</html>
